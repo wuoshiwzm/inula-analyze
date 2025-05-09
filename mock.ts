@@ -1,4 +1,4 @@
-D:\projs\test\inula-next_leonliu\packages\transpiler\babel-inula-next-core\test
+transpiler\babel-inula-next-core\test
 
 
 /*

@@ -1,3 +1,6 @@
+transpiler\babel-inula-next-core\test\classComponent
+
+
 /*
  * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
  *

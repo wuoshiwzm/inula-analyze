@@ -1,3 +1,6 @@
+D:\projs\test\inula-next_leonliu\packages\transpiler\babel-inula-next-core\test
+
+
 /*
  * Copyright (c) 2024 Huawei Technologies Co.,Ltd.
  *

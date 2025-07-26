@@ -22,14 +22,21 @@ import { ClassDeclaration } from 'babel-types';
 import { ClassExpression } from '@babel/types';
 
 
-// 添加类组件
+/************************************************************************************
+ *                                       公用                                       *
+ ************************************************************************************/
+
+// 函数组件类型：函数组件，或 HOOK
 export type CompOrHook = typeof COMPONENT | typeof HOOK;
 export type ClsType = typeof CLS_COMPONENT;
 
 // 生命周期
 export type LifeCycle = typeof WILL_MOUNT | typeof DID_MOUNT | typeof WILL_UNMOUNT | typeof DID_UNMOUNT;
 
+// 函数表达式类型  function(){} 或 ()=>{} 类型
 export type FunctionalExpression = t.FunctionExpression | t.ArrowFunctionExpression;
+
+// 基本变量
 export interface BaseVariable<V> {
   id: NodePath<t.Identifier | t.ObjectPattern | t.ArrayPattern>;
   value: V;
@@ -37,10 +44,34 @@ export interface BaseVariable<V> {
   node: t.VariableDeclarator;
 }
 
+
+// ? props
+/**
+ * 函数组件的 props ：
+
+function Car(props) {
+  return <h2>I am a { props.brand }!</h2>;
+}
+
+function Garage() {
+  return (
+    <>
+      <h1>Who lives in my garage?</h1>
+      <Car brand="Ford" />              // 传递 props { brand:'Ford' }
+    </>
+  );
+}
+
+*/
+
+
+// props 来源： 参数 / 上下文
 export const PARAM_PROPS = 'props';
 export const CTX_PROPS = 'ctx';
 export type PropsSource = typeof PARAM_PROPS | typeof CTX_PROPS;
 
+
+// single props: 
 export interface SinglePropStmt {
   name: string | number;
   value: t.LVal;
@@ -51,6 +82,8 @@ export interface SinglePropStmt {
   source: PropsSource;
   ctxName?: string;
 }
+
+// rest props: 
 export interface RestPropStmt {
   name: string;
   type: PropType.REST;
@@ -89,15 +122,16 @@ export type InitStmt = {
   type: 'init';
 };
 
-export type SubCompStmt = {
-  type: 'subComp';
-  name: string;
-  component: ComponentNode;
-};
 
+/************************************************************************************
+ *                                       公用                                       *
+ ************************************************************************************/
+
+
+// State 声明
 export type StateStmt = {
   type: 'state';
-  name: t.Identifier | t.ArrayPattern | t.ObjectPattern;
+  name: t.Identifier | t.ArrayPattern | t.ObjectPattern; // 变量，数组，类
   value: t.Expression | null;
   reactiveId: number;
   node: t.VariableDeclarator;
@@ -114,18 +148,18 @@ export type DerivedStmt = {
   lVal: t.Identifier | t.ArrayPattern | t.ObjectPattern;
   reactiveId: number;
 } & (
-  | {
+    | {
       source: DerivedSource.HOOK;
       value: t.CallExpression;
       dependency: Dependency | null;
       hookArgDependencies: Array<Dependency | null>;
     }
-  | {
+    | {
       value: t.Expression;
       dependency: Dependency;
       source: DerivedSource.STATE;
     }
-);
+  );
 
 export type ViewReturnStmt = {
   type: 'viewReturn';
@@ -149,6 +183,7 @@ export type UseHookStmt = {
   hook: HookNode;
 };
 
+// IR 语句
 export type IRStmt =
   | RawStmt
   | WatchStmt
@@ -164,6 +199,7 @@ export type IRStmt =
   | UseContextStmt
   | HookReturnStmt;
 
+// IR 作用域
 export interface IRScope {
   /**
    * The map to find the reactive id bit by name
@@ -177,7 +213,32 @@ export interface IRScope {
   level: number;
 }
 
+
+/************************************************************************************
+ *                                   Analyze 模块                                   *
+ ************************************************************************************/
+
+export interface AnalyzeContext {
+  builder: IRBuilder;
+  analyzers: Analyzer[];
+}
+
+export type Visitor<S = AnalyzeContext> = {
+  [Type in t.Node['type']]?: (path: NodePath<Extract<t.Statement, { type: Type }>>, state: S) => void;
+} & {
+  Props?: (path: NodePath<t.RestElement | t.Identifier | t.Pattern>[], state: S) => void;
+};
+export type Analyzer = () => Visitor;
+
+
+
+/************************************************************************************
+ *                                     函数组件                                     *
+ ************************************************************************************/
+
+
 /**
+ * 函数的 IRBLOCK 设计
 interface FunctionExpression extends BaseNode {
     type: "FunctionExpression";
     id?: Identifier | null;
@@ -202,10 +263,37 @@ export interface IRBlock {
   fnNode: NodePath<FunctionalExpression>;
 }
 
+// 函数组件 - ComponentNode
+export interface ComponentNode<Type = 'comp'> extends IRBlock {
+  type: Type;
+  parent?: ComponentNode;
+}
 
+// 函数HOOK - HookNode
+export interface HookNode extends IRBlock {
+  type: 'hook';
+  parent?: ComponentNode | HookNode;
+}
+
+// 子组件
+export type SubCompStmt = {
+  type: 'subComp';
+  name: string;
+  component: ComponentNode;
+};
+
+// 函数定义
+export interface FnComponentDeclaration extends t.FunctionDeclaration {
+  id: t.Identifier;
+}
+
+
+/************************************************************************************
+ *                                      类组件                                      *
+ ************************************************************************************/
 
 /**
- * 
+ * 类的 IRBLOCK 设计
 interface ClassExpression extends BaseNode {
      type: "ClassExpression";
      id?: Identifier | null;
@@ -221,59 +309,31 @@ interface ClassExpression extends BaseNode {
  */
 
 export interface ClsIRBlock {
-  name: string; // 类名
-  implements: t.ClassExpression['implements']; // implements Component
-  extends: t.ClassExpression['superClass']; // class Xxx extends Component { ... }
-  body: IRStmt[];  // 这里先使用 IRStmt, 不使用 babel t.ClassExpression['body'];
-
-
-
-  parent?: ClsIRBlock;  // jsx 中引用该组件的父组件，注意有可能存在同时有多个父组件（A 包括 B,C， 且 B 也包括 C）
-  scope: IRScope;
+  name: t.ClassExpression['id'];                // 类名
+  implements: t.ClassExpression['implements'];  // implements Component
+  extends: t.ClassExpression['superClass'];     // class Xxx extends Component { ... }
+  body: IRStmt[];       // 这里先使用 IRStmt, 不使用 babel t.ClassExpression['body'];
+  parent: ClsIRBlock;   // 类组件的父组件 Class A extends Component, Class B extends A, 继承链上必须有 Component, 否则无法渲染
+  scope: IRScope;       // 作用域
   /**
-   * The function body of the fn component code
+   * 类组件代码
    */
   clsNode: NodePath<ClassExpression>;
 
-  // 类的
-  state: object;
-  props: object;
+  // 类组件的 state 和 props
+  state?: object;
+  props?: object;
 }
 
 
-
-// 函数组件 - ComponentNode
-export interface ComponentNode<Type = 'comp'> extends IRBlock {
-  type: Type;
-  parent?: ComponentNode;
-}
-
-// 函数组件 - HookNode
-export interface HookNode extends IRBlock {
-  type: 'hook';
-  parent?: ComponentNode | HookNode;
-}
 
 // 类组件
-export interface ClsNode  extends ClsIRBlock{
-  type: 'cls';
-  parent?: ClsNode;
-  state: {},
-  props: {}
+export interface ClassNode extends ClsIRBlock {
+  type: Type;
+  parent?: ClassNode;
 }
 
-export interface AnalyzeContext {
-  builder: IRBuilder;
-  analyzers: Analyzer[];
-}
 
-export type Visitor<S = AnalyzeContext> = {
-  [Type in t.Node['type']]?: (path: NodePath<Extract<t.Statement, { type: Type }>>, state: S) => void;
-} & {
-  Props?: (path: NodePath<t.RestElement | t.Identifier | t.Pattern>[], state: S) => void;
-};
-export type Analyzer = () => Visitor;
 
-export interface FnComponentDeclaration extends t.FunctionDeclaration {
-  id: t.Identifier;
-}
+
+

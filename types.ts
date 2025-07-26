@@ -14,7 +14,7 @@
  */
 
 import { type NodePath, types as t } from '@babel/core';
-import { CLS_COMPONENT, COMPONENT, DID_MOUNT, DID_UNMOUNT, HOOK, PropType, WILL_MOUNT, WILL_UNMOUNT } from '../constants';
+import { CLS_COMPONENT, COMPONENT, DID_MOUNT, DID_UNMOUNT, HOOK, PropType, WILL_MOUNT, WILL_UNMOUNT } from './constants';
 import { ViewParticle } from '@openinula/reactivity-parser';
 import { IRBuilder } from './IRBuilder';
 import { Dependency } from '@openinula/reactivity-parser';
@@ -44,8 +44,39 @@ export interface BaseVariable<V> {
   node: t.VariableDeclarator;
 }
 
+/************************************************************************************
+ *                                   Stmt： 语句                                    *
+ ************************************************************************************/
 
-// ? props
+// 普通语句
+export type RawStmt = {
+  type: 'raw';
+  value: t.Statement;   // 可以是任何的 语句类型
+};
+
+// watch 语句
+export type WatchStmt = {
+  type: 'watch';
+  callback: NodePath<t.ArrowFunctionExpression> | NodePath<t.FunctionExpression>;
+  dependency: Dependency | null;
+};
+
+export type LifecycleStmt = {
+  type: 'lifecycle';
+  callback: NodePath<t.ArrowFunctionExpression> | NodePath<t.FunctionExpression>;
+  lifeCycle: LifeCycle;
+};
+
+export type InitStmt = {
+  type: 'init';
+};
+
+
+
+/************************************************************************************
+ *                                      Props                                       *
+ ************************************************************************************/
+
 /**
  * 函数组件的 props ：
 
@@ -73,17 +104,17 @@ export type PropsSource = typeof PARAM_PROPS | typeof CTX_PROPS;
 
 // single props: 
 export interface SinglePropStmt {
-  name: string | number;
-  value: t.LVal;
-  reactiveId: number;
-  type: PropType.SINGLE;
-  isDestructured: boolean;
-  defaultValue?: t.Expression | null;
-  source: PropsSource;
-  ctxName?: string;
+  name: string | number;                  // prop 名字： 字符串或数字？
+  value: t.LVal;                          // 左值
+  reactiveId: number;                     // 相应 ID
+  type: PropType.SINGLE;                  // prop 类型
+  isDestructured: boolean;                // 是否已经销毁（只有 singleProp 有）
+  defaultValue?: t.Expression | null;     // 默认值（只有 singleProp 有）
+  source: PropsSource;                    // 来源
+  ctxName?: string;                       // 上下文名?
 }
 
-// rest props: 
+// rest props:  没有 value 属性
 export interface RestPropStmt {
   name: string;
   type: PropType.REST;
@@ -101,32 +132,10 @@ export interface WholePropStmt {
   ctxName?: string;
 }
 
-export type RawStmt = {
-  type: 'raw';
-  value: t.Statement;
-};
-
-export type WatchStmt = {
-  type: 'watch';
-  callback: NodePath<t.ArrowFunctionExpression> | NodePath<t.FunctionExpression>;
-  dependency: Dependency | null;
-};
-
-export type LifecycleStmt = {
-  type: 'lifecycle';
-  callback: NodePath<t.ArrowFunctionExpression> | NodePath<t.FunctionExpression>;
-  lifeCycle: LifeCycle;
-};
-
-export type InitStmt = {
-  type: 'init';
-};
-
 
 /************************************************************************************
- *                                       公用                                       *
+ *                                      State                                       *
  ************************************************************************************/
-
 
 // State 声明
 export type StateStmt = {
@@ -166,6 +175,7 @@ export type ViewReturnStmt = {
   value: ViewParticle;
 };
 
+// useContext:
 export type UseContextStmt = {
   type: 'useContext';
   lVal: t.Identifier | t.ArrayPattern | t.ObjectPattern;

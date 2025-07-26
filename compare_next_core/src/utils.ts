@@ -1,6 +1,6 @@
-import { NodePath } from '@babel/core';
+import { type NodePath } from '@babel/core';
 import { types as t } from '@openinula/babel-api';
-import { CLS_COMPONENT, COMPONENT, HOOK, importMap, USE_CONTEXT } from './constants';
+import { COMPONENT, HOOK, importMap, USE_CONTEXT } from './constants';
 import { minimatch } from 'minimatch';
 import { CompilerError } from '@openinula/error-handler';
 
@@ -23,47 +23,20 @@ export function addImport(programNode: t.Program, importMap: Record<string, stri
 export function toArray<T>(val: T | T[]): T[] {
   return Array.isArray(val) ? val : [val];
 }
- 
-// 生成 Class 节点
-export function clsNode(
-  path: NodePath<t.ClassDeclaration>,
-  // path: NodePath<t.CallExpression>
-): NodePath<t.ClassDeclaration> {
 
-
-  const componentType = getClsType(path);
-  if (componentType === CLS_COMPONENT) {
-    return path;
-  }
-  throw new CompilerError(`${path.node.id?.name}  must be a class argument`, path.node.loc);
-}
-
-// 生成 FN 节点
 export function extractFnFromMacro(
   path: NodePath<t.CallExpression>,
   macroName: string
 ): NodePath<t.FunctionExpression> | NodePath<t.ArrowFunctionExpression> {
-  // Component(()=>{}) 或 Component(function xxx(){...})   获取其中的第一个参数
   const args = path.get('arguments');
-  const fnNode = args[0];
 
-  // 如果Component() 是函数声明则返回，不是函数声明，则报错
+  const fnNode = args[0];
   if (fnNode.isFunctionExpression() || fnNode.isArrowFunctionExpression()) {
     return fnNode;
   }
+
   throw new CompilerError(`${macroName} macro must have a function argument`, path.node.loc);
 }
-
-
-
-
-
-
-
-
-
-
-
 
 export function isFnExp(node: t.Node | null | undefined): node is t.FunctionExpression | t.ArrowFunctionExpression {
   return t.isFunctionExpression(node) || t.isArrowFunctionExpression(node);
@@ -95,17 +68,6 @@ export function isCompPath(path: NodePath<t.CallExpression>) {
   return callee.isIdentifier() && callee.node.name === COMPONENT;
 }
 
-export function isClsPath(path: NodePath<t.ClassDeclaration>) {
-  // find the class, like: class xxx extend Component {}
-  return path.node.type === 'ClassDeclaration' &&
-    path.node.superClass !== null &&
-    path.node.superClass !== undefined &&
-    (
-      (path.node.superClass.type === 'Identifier' && path.node.superClass.name === 'Component') ||
-      (path.node.superClass.type === 'StringLiteral' && path.node.superClass.value === 'Component')
-    );
-}
-
 export function isUseContext(path: NodePath<t.CallExpression>) {
   // find the use context, like: useContext()
   const callee = path.get('callee');
@@ -113,33 +75,19 @@ export function isUseContext(path: NodePath<t.CallExpression>) {
 }
 
 export function isHookPath(path: NodePath<t.CallExpression>) {
-  // find the component, like: Hook(() => {})
+  // find the component, like: Component(() => {})
   const callee = path.get('callee');
   return callee.isIdentifier() && callee.node.name === HOOK;
 }
 
-// 判断函数组件类型 组件/勾子
 export function getMacroType(path: NodePath<t.CallExpression>) {
-  // Component(() => {})
-  if (isCompPath(path as NodePath<t.CallExpression>)) {
+  if (isCompPath(path)) {
     return COMPONENT;
   }
-
-  // Hook(() => {})
-  if (isHookPath(path as NodePath<t.CallExpression>)) {
+  if (isHookPath(path)) {
     return HOOK;
   }
 
-  return null;
-}
-
-
-// 当前类组件只有一种类型
-export function getClsType(path: NodePath<t.ClassDeclaration>){
-  // class xxx extend Component {}
-  if(isClsPath(path)){
-    return CLS_COMPONENT;
-  }
   return null;
 }
 

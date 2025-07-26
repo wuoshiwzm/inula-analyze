@@ -1,6 +1,3 @@
-packages\transpiler\babel-inula-next-core\package.json
-
-
 {
   "name": "@openinula/babel-preset-inula-next",
   "version": "0.0.5",

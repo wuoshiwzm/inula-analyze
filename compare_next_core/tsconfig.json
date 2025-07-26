@@ -1,6 +1,3 @@
-packages\transpiler\babel-inula-next-core\tsconfig.json
-
-
 {
   "compilerOptions": {
     "target": "ESNext",
@@ -12,10 +9,7 @@ packages\transpiler\babel-inula-next-core\tsconfig.json
     "moduleResolution": "Node",
     "skipLibCheck": true,
     "strict": true,
-    "esModuleInterop": true,
-
-    "declaration": true,
-    "outDir": "dist",
+    "esModuleInterop": true
   },
   "ts-node": {
     "esm": true
@@ -23,10 +17,5 @@ packages\transpiler\babel-inula-next-core\tsconfig.json
   "exclude": [
     "node_modules",
     "dist"
-  ],
-
-
-  "include": ["src"],
-
-
+  ]
 }

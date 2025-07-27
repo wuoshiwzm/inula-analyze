@@ -72,6 +72,29 @@ export type InitStmt = {
 };
 
 
+export type DerivedStmt = {
+  type: 'derived';
+  ids: string[];
+  lVal: t.Identifier | t.ArrayPattern | t.ObjectPattern;
+  reactiveId: number;
+} & (
+    | {
+      source: DerivedSource.HOOK;
+      value: t.CallExpression;
+      dependency: Dependency | null;
+      hookArgDependencies: Array<Dependency | null>;
+    }
+    | {
+      value: t.Expression;
+      dependency: Dependency;
+      source: DerivedSource.STATE;
+    }
+  );
+
+export type ViewReturnStmt = {
+  type: 'viewReturn';
+  value: ViewParticle;
+};
 
 /************************************************************************************
  *                                      Props                                       *
@@ -151,29 +174,6 @@ export enum DerivedSource {
   STATE = 'state',
 }
 
-export type DerivedStmt = {
-  type: 'derived';
-  ids: string[];
-  lVal: t.Identifier | t.ArrayPattern | t.ObjectPattern;
-  reactiveId: number;
-} & (
-    | {
-      source: DerivedSource.HOOK;
-      value: t.CallExpression;
-      dependency: Dependency | null;
-      hookArgDependencies: Array<Dependency | null>;
-    }
-    | {
-      value: t.Expression;
-      dependency: Dependency;
-      source: DerivedSource.STATE;
-    }
-  );
-
-export type ViewReturnStmt = {
-  type: 'viewReturn';
-  value: ViewParticle;
-};
 
 // useContext:
 export type UseContextStmt = {
@@ -192,6 +192,10 @@ export type UseHookStmt = {
   name: string;
   hook: HookNode;
 };
+
+/************************************************************************************
+ *                                     IR 相关                                      *
+ ************************************************************************************/
 
 // IR 语句
 export type IRStmt =
@@ -330,10 +334,21 @@ export interface ClsIRBlock {
    */
   clsNode: NodePath<ClassExpression>;
 
+  // 类的自定义属性
+  construct: object;
+
+
+
   // 类组件的 state 和 props
-  state?: object;
-  props?: object;
+  state?: StateStmt;
+  props?: SinglePropStmt | RestPropStmt | WholePropStmt;
+
+  // render html页面代码
+  renderHtml: string;
+
 }
+ 
+
 
 
 

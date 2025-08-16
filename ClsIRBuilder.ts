@@ -24,13 +24,12 @@
  */
 import {
   BaseVariable,
+  ClassNode,
   ClsNode,
   ClsType,
   ComponentNode,
-  CompOrHook,
   DerivedSource,
   DerivedStmt,
-  FunctionalExpression,
   HookNode,
   IRBlock,
   IRStmt,
@@ -45,7 +44,7 @@ import {
 import { createClsIRNode, createIRNode } from './nodeFactory';
 import type { NodePath } from '@babel/core';
 import { getBabelApi, types as t } from '@openinula/babel-api';
-import { COMPONENT, isPropStmt, PropType, reactivityFuncNames } from '../constants';
+import { CLS_COMPONENT, COMPONENT, isPropStmt, PropType, reactivityFuncNames } from '../constants';
 import { Dependency, getDependenciesFromNode, parseReactivity } from '@openinula/reactivity-parser';
 import { assertComponentNode, assertHookNode, isUseHook } from './utils';
 import { parseView as parseJSX } from '@openinula/jsx-view-parser';
@@ -89,10 +88,304 @@ function getWaveBits(
   return waveBits;
 }
 
+
+
+
+export interface ClsIRBuilderOptions {
+  name: string;
+  clsNode: NodePath<ClassExpression>;
+  parent?: ClassNode;
+}
+
+
+export class ClsIRBuilder {
+  #current: ClassNode;
+  readonly #htmlTags: string[];
+  reactiveIndex = 0;
+
+
+  // 构造函数 createClsIRNode
+  constructor(options: ClsIRBuilderOptions, htmlTags: string[]) {
+    const { name, clsNode, parent } = options;
+    this.#current = createClsIRNode(name, CLS_COMPONENT, clsNode, parent) as ClassNode;
+    this.#htmlTags = htmlTags;
+  }
+
+  private parseIdInLVal(id: NodePath<t.LVal>, reactiveId?: number) {
+    let varIds: string[] = [];
+    if (id.isIdentifier()) {
+      const name = id.node.name;
+      this.addDeclaredReactive(name, reactiveId);
+      varIds.push(name);
+    } else if (id.isObjectPattern() || id.isArrayPattern()) {
+      const destructuredNames = searchNestedProps(id);
+      destructuredNames.forEach(name => {
+        this.addDeclaredReactive(name, reactiveId);
+      });
+      varIds = destructuredNames;
+    }
+    return varIds;
+  }
+
+  private addUsedReactives(usedIdBits: number) {
+    this.#current.scope.usedIdBits |= usedIdBits;
+  }
+
+  getNextId() {
+    return 1 << this.reactiveIndex++;
+  }
+
+  addStmt(stmt: IRStmt) {
+    this.#current.body.push(stmt);
+  }
+
+  addDeclaredReactive(name: string, id?: number) {
+    const reactiveId = id ?? this.getNextId();
+    this.#current.scope.reactiveMap.set(name, reactiveId);
+    return reactiveId;
+  }
+
+  /**
+ * Get tree level global reactive map
+ */
+  getGlobalReactiveMap() {
+    const fullReactiveMap = new Map(this.#current.scope.reactiveMap);
+    let next = this.#current.parent;
+    while (next) {
+      next.scope.reactiveMap.forEach((id, name) => {
+        if (!fullReactiveMap.has(name)) {
+          fullReactiveMap.set(name, id);
+        }
+      });
+      next = next.parent;
+    }
+
+    return fullReactiveMap;
+  }
+
+  getDependency = (node: t.Expression | t.Statement) => {
+    return getDependenciesFromNode(node, this.getGlobalReactiveMap(), reactivityFuncNames);
+  };
+
+  addRawStmt(stmt: t.Statement) {
+    this.addStmt({
+      type: 'raw',
+      value: stmt,
+    });
+  }
+
+  addProps(name: string, value: t.Identifier, source: PropsSource = PARAM_PROPS, ctxName?: string) {
+    const reactiveId = this.addDeclaredReactive(name);
+    this.addStmt({
+      name,
+      value,
+      type: PropType.WHOLE,
+      reactiveId,
+      source,
+      ctxName,
+    });
+  }
+
+  addRestProps(name: string, source: PropsSource = PARAM_PROPS, ctxName?: string) {
+    const reactiveId = this.addDeclaredReactive(name);
+    this.addStmt({
+      name,
+      type: PropType.REST,
+      reactiveId,
+      source,
+      ctxName,
+    });
+  }
+
+  /**
+ * 添加一个单个属性到对象中。
+ * 这个函数用于处理 JavaScript/TypeScript 的对象字面量，可能是编译器或代码转换工具的一部分。
+ * 它接收一个键（key）、一个值路径（valPath）、一个属性源（source）和一个上下文名称（ctxName）作为参数。
+ * 它会检查值路径是否是一个有效的左值（LVal），如果不是，会抛出一个编译器错误。
+ * 然后，它会获取下一个 ID，并根据值路径是否被解构来处理不同的逻辑。
+ * 最后，它会添加一个语句，包含键、反应式 ID、值、类型、是否被解构、默认值、源和上下文名称。
+ * @param key - 属性的键
+ * @param valPath - 属性的值路径
+ * @param source - 属性的来源，默认为 PARAM_PROPS
+ * @param ctxName - 上下文名称
+ * @throws {CompilerError} 如果值路径不是有效的左值
+ */
+  addSingleProp(
+    key: string | number,
+    valPath: NodePath<t.Expression | t.PatternLike>,
+    source: PropsSource = PARAM_PROPS,
+    ctxName?: string
+  ) {
+    // 检查值路径是否是有效的左值（LVal），如果不是，抛出编译器错误
+    if (!valPath.isLVal()) {
+      throw new CompilerError('Invalid Prop Value type: ' + valPath.type, valPath.node.loc);
+    }
+
+    // 获取下一个唯一的 ID
+    const reactiveId = this.getNextId();
+
+    // 检查值路径是否被解构
+    const destructured = getDestructure(valPath);
+    let value = valPath.node;
+    let defaultValue: t.Expression | null = null;
+
+    if (destructured) {
+      // 如果值路径被解构，获取所有解构的名称
+      const destructuredNames = searchNestedProps(destructured);
+
+      // 为每个解构的名称添加声明的反应式
+      destructuredNames.forEach(name => this.addDeclaredReactive(name, reactiveId));
+    } else {
+      // 如果没有被解构，获取属性名
+      let propName = key;
+
+      // 如果值路径是标识符且名称与键不同，使用标识符的名称作为属性名
+      if (valPath.isIdentifier() && valPath.node.name !== key) {
+        propName = valPath.node.name;
+      }
+
+      // 如果值路径是赋值模式（如 { a = defaultValue }），处理赋值逻辑
+      if (valPath.isAssignmentPattern()) {
+        const left = valPath.node.left;
+        if (t.isIdentifier(left) && left.name !== key) {
+          propName = left.name;
+        }
+        value = left;
+        defaultValue = valPath.node.right;
+      }
+
+      // 为属性名添加声明的反应式
+      this.addDeclaredReactive(propName as string, reactiveId);
+    }
+
+    // 添加一个语句，包含键、反应式 ID、值、类型、是否被解构、默认值、源和上下文名称
+    this.addStmt({
+      name: key,
+      reactiveId,
+      value,
+      type: PropType.SINGLE,
+      isDestructured: !!destructured,
+      defaultValue,
+      source,
+      ctxName,
+    });
+  }
+
+  /*
+    private parseIdInLVal(id: NodePath<t.LVal>, reactiveId?: number) {
+    let varIds: string[] = [];
+    if (id.isIdentifier()) {
+      const name = id.node.name;
+      this.addDeclaredReactive(name, reactiveId);
+      varIds.push(name);
+    } else if (id.isObjectPattern() || id.isArrayPattern()) {
+      const destructuredNames = searchNestedProps(id);
+      destructuredNames.forEach(name => {
+        this.addDeclaredReactive(name, reactiveId);
+      });
+      varIds = destructuredNames;
+    }
+    return varIds;
+  }
+  */
+
+// ******************添加变量，类组件和函数组件不一样，函数组件中的生成变量就是 setState, 类组件可不是
+addVariable(varInfo: BaseVariable<t.Expression | null>) {
+  // 获取变量的id和值
+  const id = varInfo.id;
+  const value = varInfo.value;
+
+  // 生成一个唯一的变量的reactiveId
+  const reactiveId = this.getNextId();
+
+  // 解析变量id，获取其在左值表达式中的id
+  const varIds = this.parseIdInLVal(id, reactiveId);
+
+  // 如果变量的值存在
+  if (value) {
+    // 获取变量值的依赖关系
+    const dependency = this.getDependency(value);
+
+    // 如果值是一个hook函数调用
+    if (isUseHook(value)) {
+      // 如果存在依赖关系，将其添加到已使用的reactive中
+      if (dependency) {
+        this.addUsedReactives(dependency.depIdBitmap);
+      }
+
+      // 添加一个类型为'derived'的语句，表示该变量是派生的 包含变量的id、reactiveId、值、依赖关系等信息
+      // 类 A_class.a -> 类 B_class.A_object.a   A_object 为 A_class 的对象
+      this.addStmt({
+        type: 'derived',
+        ids: varIds,
+        lVal: id.node,
+        reactiveId: reactiveId,
+        value,
+        source: DerivedSource.HOOK,
+        dependency,
+        hookArgDependencies: getHookProps(value, this.getDependency),
+      });
+      return;
+    }
+
+    // 如果值不是hook函数调用，但存在依赖关系
+    if (dependency) {
+      // 将依赖关系添加到已使用的reactive中
+      this.addUsedReactives(dependency.depIdBitmap);
+
+      // 添加一个类型为'derived'的语句，表示该变量是派生的
+      // 包含变量的id、reactiveId、值、依赖关系等信息
+      this.addStmt({
+        type: 'derived',
+        ids: varIds,
+        lVal: id.node,
+        reactiveId: reactiveId,
+        value,
+        source: DerivedSource.STATE,
+        dependency,
+      });
+      return;
+    }
+  }
+
+  // 这里要改， 函数中的变量生成就是 setState, 但是类组件中可不是
+
+  // 如果值不存在依赖关系，或者值为null/undefined
+  // 添加一个类型为'state'的语句，表示该变量是一个原始状态
+  this.addStmt({
+    type: 'state',
+    name: id.node,
+    value,
+    reactiveId,
+    node: varInfo.node,
+  });
+}
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /**
  * 生成 IR 
  */
-export class ClsIRBuilder {
+export class ClsIRBuilder1 {
   #current: ClsNode; // 类组件节点
   readonly #htmlTags: string[];  // 对应 html 代码
   reactiveIndex = 0;
